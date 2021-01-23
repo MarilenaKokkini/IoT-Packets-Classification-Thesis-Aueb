@@ -1,0 +1,681 @@
+import binascii
+import csv
+from itertools import product
+
+from scapy.all import *
+
+# use the lists to store and write the information in files
+pkt_layer_lst_mqtt = []  # stores ether/ cooked linux for mqtt
+pkt_layer_lst_coap = []  # stores ether/ cooked linux for coap
+pkt_layer_lst_amqp = []  # stores ether/ cooked linux for amqp
+
+# tcp protocol
+pkt_transport_protocol_mqtt = []  # we store only tcp
+pkt_transport_protocol_coap = []  # we store only tcp
+pkt_transport_protocol_amqp = []  # we store only tcp
+
+# mac src
+pkt_mac_src_mqtt = []
+pkt_mac_src_coap = []
+pkt_mac_src_amqp = []
+
+# mac dst
+pkt_mac_dst_mqtt = []
+pkt_mac_dst_coap = []
+pkt_mac_dst_amqp = []
+
+# ip src
+pkt_ip_src_mqtt = []
+pkt_ip_src_coap = []
+pkt_ip_src_amqp = []
+
+# ip dst
+pkt_ip_dst_mqtt = []
+pkt_ip_dst_coap = []
+pkt_ip_dst_amqp = []
+
+# port src
+pkt_port_src_mqtt = []
+pkt_port_src_coap = []
+pkt_port_src_amqp = []
+
+# port dst
+pkt_port_dst_mqtt = []
+pkt_port_dst_coap = []
+pkt_port_dst_amqp = []
+
+# packet size
+pkt_size_mqtt = []
+pkt_size_coap = []
+pkt_size_amqp = []
+
+# payload size
+payload_size_mqtt = []
+payload_size_coap = []
+payload_size_amqp = []
+
+# is encrypted
+is_encrypted_mqtt = []
+is_encrypted_coap = []
+is_encrypted_amqp = []
+
+# payload ratio
+payload_ratio_mqtt = []
+payload_ratio_coap = []
+payload_ratio_amqp = []
+
+# previous packet ratio
+prev_pkt_ratio_mqtt = []
+prev_pkt_ratio_coap = []
+prev_pkt_ratio_amqp = []
+
+# time difference
+time_difference_mqtt = []
+time_difference_coap = []
+time_difference_amqp = []
+
+# payload
+payload_mqtt = []
+payload_coap = []
+payload_amqp = []
+
+# application layer protocol
+app_protocol_mqtt = []
+app_protocol_coap = []
+app_protocol_amqp = []
+
+# packet time
+time_mqtt = []
+time_coap = []
+time_amqp = []
+
+# packet hour
+hour_mqtt = []
+hour_coap = []
+hour_amqp = []
+
+
+# THE PORT ARE VALID DUE TO https://www.iana.org/assignments/service-names-port-numbers/service-names
+# -port-numbers.xhtml?search=amqp
+
+def create_hex_from_bits(bits):  # pass the parameter like that: '00100001'
+    """converts bits into hex in order to find them in the packet"""
+    result = "x%x" % (int(bits, 2))
+    return result
+
+
+# REFERENCE: https://docs.solace.com/MQTT-311-Prtl-Conformance-Spec/MQTT%20Control%20Packet%20format.htm
+def create_mqtt_first_byte():
+    """this function generates the first mqtt byte through flags"""
+    # control field(packet type-->4 bits, flags-->4 bits)
+    # if dup = 0 then qos = 0
+    # calculate remaining length
+    packet_type = {
+        # "Reserved": '0000',  # we use only 4 bits, so the rest 4
+        # are the length of the packet... cannot be null
+        "CONNECT": '00010000',
+        "CONNACK": '00100000',
+        "PUBLISH_DUP0_Q0_R0": '00110000',
+        "PUBLISH_DUP0_Q3_R1": '00110111',
+        "PUBLISH_DUP0_Q3_R0": '00110110',
+        "PUBLISH_DUP0_Q2_R1": '00110101',
+        "PUBLISH_DUP0_Q2_R0": '00110100',
+        "PUBLISH_DUP0_Q1_R1": '00110011',
+        "PUBLISH_DUP0_Q1_R0": '00110010',
+        "PUBLISH_DUP0_Q0_R1": '00110001',
+        # "PUBLISH_DUP1_Q0_R0": '00111000',
+        "PUBLISH_DUP1_Q1_R0": '00111010',
+        "PUBLISH_DUP1_Q2_R0": '00111100',
+        "PUBLISH_DUP1_Q3_R0": '00111110',
+        # "PUBLISH_DUP1_Q0_R1": '00111001',
+        "PUBLISH_DUP1_Q1_R1": '00111011',
+        "PUBLISH_DUP1_Q2_R1": '00111101',
+        "PUBLISH_DUP1_Q3_R1": '00111111',
+        "PUBACK": '01000000',
+        "PUBREC": '01010000',
+        "PUBREL": '01100010',
+        "PUBCOMP": '01110000',
+        "SUBSCRIBE": '10000010',
+        "SUBACK": '10010000',
+        "UNSUBSCRIBE": '10100010',
+        "UNSUBACK": '10110000',
+        "PINGREQ": '11000000',
+        "PINGRESP": '11010000',
+        "DISCONNECT": '11100000'
+    }
+    bits_to_hex = [create_hex_from_bits(value) for value in packet_type.values()]
+    return bits_to_hex
+
+
+# REFERENCES: https://www.rabbitmq.com/resources/specs/amqp0-9-1.pdf
+def is_amqp(payload, current_packet, type_protocol):  # type_protocol = TCP/UDP
+    """Decides whether the packet is amqp or not"""
+    answer = "no"
+    if "AMQP" in payload:  # initiates the connection (first amqp packet)
+        answer = "yes"
+        return answer
+    else:
+        if len(payload) >= 8:  # Header, having a fixed size (8 byte);
+            # frame end is always %xce
+            end_code = "\\xce"
+            index = payload.find(end_code)
+            right_index = len(payload) - 5
+            if index == right_index:
+                answer = "yes"
+                return answer
+    # also packets from given ports
+    src_port = current_packet[type_protocol].sport
+    dst_port = current_packet[type_protocol].dport
+    if (src_port == 5671) or (dst_port == 5671) or (src_port == 5672) or (dst_port == 5672):
+        answer = "yes"
+        return answer
+
+    return answer
+
+
+def create_coap_first_byte():
+    # version is always 01 = coap version 1
+    ver = '01'
+    my_types = {"confirmable": '00', "Non-cofirmable": '01', "Acknowledgement": '10', "Reset": '11'}
+    token_length = {0: '0000', 1: '0001', 2: '0010', 3: '0011', 4: '0100', 5: '0101', 6: '0110', 7: '0111',
+                    8: '1000'}
+    first_byte = []
+    for protocol_type, token in product(my_types.values(), token_length.values()):  # removed nested loop
+        combination = ver + protocol_type + token
+        hex_combination = create_hex_from_bits(combination)
+        if hex_combination not in first_byte:
+            # create possible combinations
+            first_byte.append(hex_combination)
+    return first_byte
+
+
+def is_coap(payload, current_packet, type_protocol, first_byte):
+    # first byte is the list with the possible combinations for a coap byte
+    answer = "no"
+    if len(payload) >= 4:  # fixed header 4 bytes
+        for byte in first_byte:
+            if byte in payload[:7]:
+                answer = "yes"
+                return answer
+
+        src_port = current_packet[type_protocol].sport
+        dst_port = current_packet[type_protocol].dport
+        if (src_port == 5683) or (dst_port == 5683):
+            answer = "yes"
+            return answer
+
+    return answer
+
+
+def is_mqtt(payload, list_with_codes, current_packet, type_protocol):
+    """decide if the packet uses mqtt or not"""
+    answer = "no"
+    if "MQTT" in payload:
+        answer = "yes"
+        return answer
+
+    for mqtt_code in list_with_codes:  # e.g xe0
+        exact_code = "\\" + mqtt_code + "\\"  # e.g \xe0\
+        if exact_code in payload[:7]:
+            answer = "yes"
+            return answer
+
+    # also packets from given ports
+    src_port = current_packet[type_protocol].sport
+    dst_port = current_packet[type_protocol].dport
+    if (src_port == 1883) or (dst_port == 1883) or (src_port == 8883) or (dst_port == 8883):
+        answer = "yes"
+        return answer
+
+    return answer
+
+
+def write_mqtt_file():
+    """creates a file with all mqtt packets"""
+    # print("done!")
+    mqtt_file = 'mqtt_information.csv'
+    with open(mqtt_file, 'w', newline='') as csv_file:  # automatically close the file
+        csv_file = csv.writer(csv_file, delimiter=',')
+        csv_file.writerow(
+            ['app_protocol', 'transport_protocol', 'layer', 'mac_src', 'mac_dst', 'src_ip', 'dst_ip',
+             'src_port', 'dst_port', 'pkt_size', 'is_encrypted', 'payload size', 'payload_ratio', 'previous_ratio',
+             'packet_time_diff', 'payload', 'p_date', 'p_time'])
+        for (ap, q, w, e, r, t, y, u, i, o, p, a, s, d, f, g, date, h) in zip(app_protocol_mqtt,
+                                                                              pkt_transport_protocol_mqtt,
+                                                                              pkt_layer_lst_mqtt,
+                                                                              pkt_mac_src_mqtt,
+                                                                              pkt_mac_dst_mqtt,
+                                                                              pkt_ip_src_mqtt,
+                                                                              pkt_ip_dst_mqtt,
+                                                                              pkt_port_src_mqtt,
+                                                                              pkt_port_dst_mqtt,
+                                                                              pkt_size_mqtt,
+                                                                              is_encrypted_mqtt,
+                                                                              payload_size_mqtt,
+                                                                              payload_ratio_mqtt,
+                                                                              prev_pkt_ratio_mqtt,
+                                                                              time_difference_mqtt,
+                                                                              payload_mqtt,
+                                                                              time_mqtt,
+                                                                              hour_mqtt):
+            csv_file.writerow([ap, q, w, e, r, t, y, u, i, o, p, a, s, d, f, g, date, h])
+    # print("Wrote mqtt file!")
+
+
+def write_coap_file():
+    """creates a file with all coap packets"""
+    coap_file = 'coap_information.csv'
+    with open(coap_file, 'w', newline='') as csvfile:  # automatically close the file
+        csvfile = csv.writer(csvfile, delimiter=',')
+        csvfile.writerow(
+            ['app_protocol', 'transport_protocol', 'layer', 'mac_src', 'mac_dst', 'src_ip', 'dst_ip',
+             'src_port', 'dst_port', 'pkt_size', 'is_encrypted', 'payload size', 'payload_ratio', 'previous_ratio',
+             'packet_time_diff', 'payload', 'p_date', 'p_time'])
+        for (ap, qc, wc, ec, rc, tc, yc, uc, ic, oc, pc, ac, sc, dc, fc, gc, t, h) in zip(app_protocol_coap,
+                                                                                          pkt_transport_protocol_coap,
+                                                                                          pkt_layer_lst_coap,
+                                                                                          pkt_mac_src_coap,
+                                                                                          pkt_mac_dst_coap,
+                                                                                          pkt_ip_src_coap,
+                                                                                          pkt_ip_dst_coap,
+                                                                                          pkt_port_src_coap,
+                                                                                          pkt_port_dst_coap,
+                                                                                          pkt_size_coap,
+                                                                                          is_encrypted_coap,
+                                                                                          payload_size_coap,
+                                                                                          payload_ratio_coap,
+                                                                                          prev_pkt_ratio_coap,
+                                                                                          time_difference_coap,
+                                                                                          payload_coap,
+                                                                                          time_coap,
+                                                                                          hour_coap):
+            csvfile.writerow([ap, qc, wc, ec, rc, tc, yc, uc, ic, oc, pc, ac, sc, dc, fc, gc, t, h])
+    # print("Wrote coap file!")
+
+
+def write_files():
+    """ write all files """
+    write_mqtt_file()
+    write_coap_file()
+    write_amqp_file()
+    print("done!")
+
+
+def write_amqp_file():
+    """creates a file with all the amqp packets"""
+    amqp_file = 'ampq_information.csv'
+    with open(amqp_file, 'w', newline='') as csvfile:  # automatically close the file
+        csvfile = csv.writer(csvfile, delimiter=',')
+        csvfile.writerow(
+            ['app_protocol', 'transport_protocol', 'layer', 'mac_src', 'mac_dst', 'src_ip', 'dst_ip',
+             'src_port', 'dst_port', 'pkt_size', 'is_encrypted', 'payload size', 'payload_ratio', 'previous_ratio',
+             'packet_time_diff', 'payload', 'p_date', 'p_time'])
+        for (ap, qc, wc, ec, rc, tc, yc, uc, ic, oc, pc, ac, sc, dc, fc, gc, t, h) in zip(app_protocol_amqp,
+                                                                                          pkt_transport_protocol_amqp,
+                                                                                          pkt_layer_lst_amqp,
+                                                                                          pkt_mac_src_amqp,
+                                                                                          pkt_mac_dst_amqp,
+                                                                                          pkt_ip_src_amqp,
+                                                                                          pkt_ip_dst_amqp,
+                                                                                          pkt_port_src_amqp,
+                                                                                          pkt_port_dst_amqp,
+                                                                                          pkt_size_amqp,
+                                                                                          is_encrypted_amqp,
+                                                                                          payload_size_amqp,
+                                                                                          payload_ratio_amqp,
+                                                                                          prev_pkt_ratio_amqp,
+                                                                                          time_difference_amqp,
+                                                                                          payload_amqp,
+                                                                                          time_amqp,
+                                                                                          hour_amqp):
+            csvfile.writerow([ap, qc, wc, ec, rc, tc, yc, uc, ic, oc, pc, ac, sc, dc, fc, gc, t, h])
+    # print("Wrote amqp file!")
+
+
+# References: https://stackoverflow.com/questions/4959741/python-print-mac-address-out-of-6-byte-string
+def prettify(mac_string):
+    """convert byte format to hex format, about mac"""
+    return ':'.join('%02x' % ord(b) for b in mac_string)
+
+
+def extract_characteristics_from_packet(pkt, previous_packet_time, previous_packet_size, payload):
+    """ this method extracts the most important characteristics of the packets, probably will be used in Ml"""
+    # 1st vital characteristic is packet length
+    pkt_size = len(pkt)
+    # 2nd vital characteristic is whether the packet is encrypted
+    is_encrypted = 0
+    layer_level = 0
+    searching_layers = True  # e.g. Ethernet, Ip, Icmp, Raw
+    while searching_layers:
+        layer = pkt.getlayer(layer_level)
+        if layer is not None:
+            if 'SSL/TLS' in layer.name:  # encryption protocols
+                is_encrypted = 1  # encrypted packet
+            else:
+                searching_layers = False
+            layer_level += 1  # check next layer
+    # 3rd vital characteristic is the payload size
+    # 4rth vital characteristic is the payload ratio
+    if "Raw" in pkt:
+        payload_size = len(pkt["Raw"])
+        payload_ratio = (payload_size / pkt_size) * 100
+    else:
+        payload_size = 0
+        payload_ratio = 0
+    # 5th vital characteristic is previous packet ratio
+    # defaults to 0 for the first packet of the session
+    if previous_packet_size != 0:
+        previous_ratio = (pkt_size / previous_packet_size) * 100
+    else:
+        previous_ratio = 1
+        previous_packet_size = pkt_size
+    # 6th vital characteristic is time difference
+    if previous_packet_time != 0:
+        packet_time_diff = Decimal(pkt.time) - Decimal(previous_packet_time)
+    else:
+        packet_time_diff = 0
+        previous_packet_time = Decimal(pkt.time)
+
+    # 7th vital characteristic is payload content
+    # convert to hex type
+    payload_fix_format_type = binascii.hexlify(bytes(payload))
+
+    return pkt_size, is_encrypted, payload_size, payload_ratio, previous_packet_time, \
+           previous_packet_size, previous_ratio, packet_time_diff, payload_fix_format_type
+
+
+def find_first_layer_protocol(pkt):
+    """get mac address src and dst and first layer"""
+    if "Ether" in pkt:  # check for cooked linux
+        mac_src_in_bytes = str(pkt["Ether"].src)
+        mac_src = prettify(mac_src_in_bytes)
+        mac_dst_in_bytes = str(pkt["Ether"].dst)
+        mac_dst = prettify(mac_dst_in_bytes)
+        layer = "Ethernet"
+    elif "CookedLinux" in pkt:
+        mac_src_in_bytes = str(pkt["CookedLinux"].src)
+        mac_src = prettify(mac_src_in_bytes)
+        # doesn't contain the destination mac address!
+        mac_dst_in_bytes = None
+        mac_dst = None
+        layer = "Cooked Linux"
+    else:
+        print("neither Ether or CookedLinux")
+        mac_src = None
+        mac_dst = None
+        layer = "other"
+    return mac_src, mac_dst, layer
+
+
+def get_date_and_time(pkt):
+    """get the date and the time of the packet"""
+    pkt_time = pkt.time
+    p_date = datetime.fromtimestamp(pkt_time).strftime('%Y-%m-%d ')  # format: 2020-10-08
+    p_hour = datetime.fromtimestamp(pkt_time).strftime('%H:%M:%S')  # format: 22:40:41
+    return p_date, p_hour
+
+
+def get_ip_addresses(pkt):
+    """get src and dst mac"""
+    # get ip addresses
+    src_ip = pkt["IP"].src
+    dst_ip = pkt["IP"].dst
+    return src_ip, dst_ip
+
+
+def get_ports(pkt, type_protocol):
+    """get ports: dst and src"""
+    src_port = pkt[type_protocol].sport
+    dst_port = pkt[type_protocol].dport
+    return src_port, dst_port
+
+
+def fill_coap_info(type_protocol, layer, mac_src, mac_dst, src_ip, dst_ip,
+                   src_port, dst_port, pkt_size, is_encrypted, payload_size, payload_ratio, previous_ratio,
+                   packet_time_diff, payload, app_protocol, p_date, p_hour):
+    """fill coap info to write file"""
+    pkt_transport_protocol_coap.append(type_protocol)
+    pkt_layer_lst_coap.append(layer)
+    pkt_mac_src_coap.append(mac_src)
+    pkt_mac_dst_coap.append(mac_dst)
+    pkt_ip_src_coap.append(src_ip)
+    pkt_ip_dst_coap.append(dst_ip)
+    pkt_port_src_coap.append(src_port)
+    pkt_port_dst_coap.append(dst_port)
+    pkt_size_coap.append(pkt_size)
+    is_encrypted_coap.append(is_encrypted)
+    payload_size_coap.append(payload_size)
+    payload_ratio_coap.append(payload_ratio)
+    prev_pkt_ratio_coap.append(previous_ratio)
+    time_difference_coap.append(packet_time_diff)
+    payload_coap.append(payload)
+    app_protocol_coap.append(app_protocol)
+    time_coap.append(p_date)
+    hour_coap.append(p_hour)
+
+
+def fill_mqtt_info(type_protocol, layer, mac_src, mac_dst, src_ip, dst_ip,
+                   src_port, dst_port, pkt_size, is_encrypted, payload_size, payload_ratio, previous_ratio,
+                   packet_time_diff, payload, app_protocol, p_date, p_hour):
+    """fill lists to write the info to files"""
+    pkt_transport_protocol_mqtt.append(type_protocol)
+    pkt_layer_lst_mqtt.append(layer)
+    pkt_mac_src_mqtt.append(mac_src)
+    pkt_mac_dst_mqtt.append(mac_dst)
+    pkt_ip_src_mqtt.append(src_ip)
+    pkt_ip_dst_mqtt.append(dst_ip)
+    pkt_port_src_mqtt.append(src_port)
+    pkt_port_dst_mqtt.append(dst_port)
+    pkt_size_mqtt.append(pkt_size)
+    is_encrypted_mqtt.append(is_encrypted)
+    payload_size_mqtt.append(payload_size)
+    payload_ratio_mqtt.append(payload_ratio)
+    prev_pkt_ratio_mqtt.append(previous_ratio)
+    time_difference_mqtt.append(packet_time_diff)
+    payload_mqtt.append(payload)
+    app_protocol_mqtt.append(app_protocol)
+    time_mqtt.append(p_date)
+    hour_mqtt.append(p_hour)
+
+
+def fill_amqp_info(type_protocol, layer, mac_src, mac_dst, src_ip, dst_ip,
+                   src_port, dst_port, pkt_size, is_encrypted, payload_size, payload_ratio, previous_ratio,
+                   packet_time_diff, payload, app_protocol, p_date, p_hour):
+    pkt_transport_protocol_amqp.append(type_protocol)
+    pkt_layer_lst_amqp.append(layer)
+    pkt_mac_src_amqp.append(mac_src)
+    pkt_mac_dst_amqp.append(mac_dst)
+    pkt_ip_src_amqp.append(src_ip)
+    pkt_ip_dst_amqp.append(dst_ip)
+    pkt_port_src_amqp.append(src_port)
+    pkt_port_dst_amqp.append(dst_port)
+    pkt_size_amqp.append(pkt_size)
+    is_encrypted_amqp.append(is_encrypted)
+    payload_size_amqp.append(payload_size)
+    payload_ratio_amqp.append(payload_ratio)
+    prev_pkt_ratio_amqp.append(previous_ratio)
+    time_difference_amqp.append(packet_time_diff)
+    payload_amqp.append(payload)
+    app_protocol_amqp.append(app_protocol)
+    time_amqp.append(p_date)
+    hour_amqp.append(p_hour)
+
+
+def pcap_pkt_reader():
+    """extracts the basic information of the packets, only for the 3 basic IoT protocols"""
+
+    file_name = 'save2.pcap'
+    # if this file is not in the system...
+    if not os.path.isfile(file_name):
+        print('"{}" does not exist'.format(file_name), file=sys.stderr)
+        sys.exit(-1)
+    # if the file is in the system...
+    else:
+        print('file found!')
+        packets_list = rdpcap(file_name)
+
+        tcp_counter = 0
+        udp_counter = 0
+        mqtt_counter = 0
+        coap_counter = 0
+        amqp_counter = 0
+
+        previous_packet_size = 0
+        previous_packet_time = 0
+
+        # initialise list with mqtt codes
+        list_with_mqtt_codes = create_mqtt_first_byte()
+        list_with_coap_codes = create_coap_first_byte()
+
+        # counter = 0
+        pkt_id = 0
+        for pkt in packets_list:
+
+            pkt_id += 1
+            # date and time of the packet
+            p_date, p_hour = get_date_and_time(pkt)
+
+            # TCP CASE
+            if "TCP" in pkt:
+                tcp_counter += 1
+                type_protocol = "TCP"
+
+                # get mac addresses and first layer
+                mac_src, mac_dst, layer = find_first_layer_protocol(pkt)
+
+                # get ip addresses
+                src_ip, dst_ip = get_ip_addresses(pkt)
+
+                # get port numbers
+                src_port, dst_port = get_ports(pkt, type_protocol)
+
+                # check for Iop protocols
+                # search tcp payload in order to find the application layer level
+                payload = pkt["TCP"].payload
+                str_payload = str(payload)
+
+                if str_payload:  # not b'' TCP payload is zero so there is no header fro the application layer
+
+                    # capture AMQP protocol:
+                    amqp_answer = is_amqp(str_payload, pkt, type_protocol)
+                    if amqp_answer == "yes":
+                        amqp_counter += 1
+                        app_protocol = "AMQP"
+
+                        pkt_size, is_encrypted, payload_size, payload_ratio, previous_packet_time, \
+                        previous_packet_size, previous_ratio, packet_time_diff, payload = extract_characteristics_from_packet(
+                            pkt, previous_packet_time, previous_packet_size, payload)
+
+                        # store the information about amqp protocol
+                        fill_amqp_info(type_protocol, layer, mac_src, mac_dst, src_ip, dst_ip,
+                                       src_port, dst_port, pkt_size, is_encrypted, payload_size, payload_ratio,
+                                       previous_ratio,
+                                       packet_time_diff, payload, app_protocol, p_date, p_hour)
+                    else:
+                        # capture mqtt protocol
+                        mqtt_answer = is_mqtt(str_payload, list_with_mqtt_codes, pkt, type_protocol)
+                        if mqtt_answer == "yes":
+                            mqtt_counter += 1
+                            app_protocol = "MQTT"
+                            pkt_size, is_encrypted, payload_size, payload_ratio, previous_packet_time, \
+                            previous_packet_size, previous_ratio, packet_time_diff, payload = extract_characteristics_from_packet(
+                                pkt, previous_packet_time, previous_packet_size, payload)
+
+                            # store the information about mqtt protocol
+                            fill_mqtt_info(type_protocol, layer, mac_src, mac_dst, src_ip, dst_ip,
+                                           src_port, dst_port, pkt_size, is_encrypted, payload_size, payload_ratio,
+                                           previous_ratio, packet_time_diff, payload, app_protocol, p_date, p_hour)
+                        else:
+                            # capture Coap protocol:
+                            coap_answer = is_coap(str_payload, pkt, type_protocol, list_with_coap_codes)
+                            if coap_answer == "yes":
+                                coap_counter += 1
+                                app_protocol = "COAP"
+                                pkt_size, is_encrypted, payload_size, payload_ratio, previous_packet_time, \
+                                previous_packet_size, previous_ratio, packet_time_diff, payload = extract_characteristics_from_packet(
+                                    pkt, previous_packet_time, previous_packet_size, payload)
+
+                                # store the information about coap protocol
+                                fill_coap_info(type_protocol, layer, mac_src, mac_dst, src_ip, dst_ip,
+                                               src_port, dst_port, pkt_size, is_encrypted, payload_size, payload_ratio,
+                                               previous_ratio,
+                                               packet_time_diff, payload, app_protocol, p_date, p_hour)
+
+                continue  # no need to check udp if the packet is tcp
+
+            # UDP CASE
+            if "UDP" in pkt:
+                udp_counter += 1
+                type_protocol = "UDP"
+
+                # get mac addresses and first layer
+                mac_src, mac_dst, layer = find_first_layer_protocol(pkt)
+
+                # get ip addresses
+                src_ip, dst_ip = get_ip_addresses(pkt)
+
+                # get port numbers
+                src_port, dst_port = get_ports(pkt, type_protocol)
+
+                # check for Iop protocols
+
+                # search tcp payload in order to find the application layer level
+                payload = pkt["UDP"].payload
+                str_payload = str(payload)
+
+                if str_payload:  # not b'' TCP payload is zero so there is no header fro the application layer
+
+                    # capture AMQP protocol:
+                    amqp_answer = is_amqp(str_payload, pkt, type_protocol)
+                    if amqp_answer == "yes":
+                        amqp_counter += 1
+                        app_protocol = "AMQP"
+                        pkt_size, is_encrypted, payload_size, payload_ratio, previous_packet_time, \
+                        previous_packet_size, previous_ratio, packet_time_diff, payload = extract_characteristics_from_packet(
+                            pkt, previous_packet_time, previous_packet_size, payload)
+
+                        # store the information about amqp protocol
+                        fill_amqp_info(type_protocol, layer, mac_src, mac_dst, src_ip, dst_ip,
+                                       src_port, dst_port, pkt_size, is_encrypted, payload_size, payload_ratio,
+                                       previous_ratio,
+                                       packet_time_diff, payload, app_protocol, p_date, p_hour)
+                    else:
+                        # capture mqtt protocol
+                        mqtt_answer = is_mqtt(str_payload, list_with_mqtt_codes, pkt, type_protocol)
+                        if mqtt_answer == "yes":
+                            mqtt_counter += 1
+                            app_protocol = "MQTT"
+                            # print(f"my id: {pkt_id}, payload: {payload}")
+                            pkt_size, is_encrypted, payload_size, payload_ratio, previous_packet_time, \
+                            previous_packet_size, previous_ratio, packet_time_diff, payload = extract_characteristics_from_packet(
+                                pkt, previous_packet_time, previous_packet_size, payload)
+
+                            # store the information about mqtt protocol
+                            fill_mqtt_info(type_protocol, layer, mac_src, mac_dst, src_ip, dst_ip,
+                                           src_port, dst_port, pkt_size, is_encrypted, payload_size, payload_ratio,
+                                           previous_ratio, packet_time_diff, payload, app_protocol, p_date, p_hour)
+                        else:
+                            # capture Coap protocol:
+                            coap_answer = is_coap(str_payload, pkt, type_protocol, list_with_coap_codes)
+                            if coap_answer == "yes":
+                                coap_counter += 1
+                                app_protocol = "COAP"
+                                pkt_size, is_encrypted, payload_size, payload_ratio, previous_packet_time, \
+                                previous_packet_size, previous_ratio, packet_time_diff, payload = extract_characteristics_from_packet(
+                                    pkt, previous_packet_time, previous_packet_size, payload)
+
+                                # store the information about coap protocol
+                                fill_coap_info(type_protocol, layer, mac_src, mac_dst, src_ip, dst_ip,
+                                               src_port, dst_port, pkt_size, is_encrypted, payload_size, payload_ratio,
+                                               previous_ratio,
+                                               packet_time_diff, payload, app_protocol, p_date, p_hour)
+
+        # print(f"we have {tcp_counter} tcp packets.")
+        # print(f"we have {udp_counter} udp packets.")
+        # print(f"we have {mqtt_counter} MQTT packets.")
+        # print(f"we have {coap_counter} CoAp packets.")
+        # print(f"we have {amqp_counter} AMQP packets.")
+
+
+pcap_pkt_reader()
+write_files()
